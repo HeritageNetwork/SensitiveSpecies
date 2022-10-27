@@ -1,0 +1,141 @@
+---
+title: "Heritage Network Senstive Species Analysis"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+
+Just some file prep
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(here)
+library(ggplot2)
+
+sensp <- read_xlsx(here("Data Sensitive species with state info 4Oct2022.xlsx"))
+
+sensp_long <- sensp %>%
+  pivot_longer(
+    cols = ends_with("_DATASENS"),
+    names_to = "subnation",
+    values_to = "sensitive",
+    values_drop_na = TRUE
+  )
+
+sensp_long$subnation <- substr(sensp_long$subnation, 1, 2) 
+
+#Remove Animal Assemblages
+sensp_long <- sensp_long[which(!is.na(sensp_long$INFORMAL_TAX)),]
+
+```
+
+
+```{r}
+b <- sensp %>%
+  count(INFORMAL_GRP)
+
+b$fraction <- b$n/sum(b$n)
+
+# Compute the cumulative percentages (top of each rectangle)
+b$ymax = cumsum(b$fraction)
+
+# Compute the bottom of each rectangle
+b$ymin = c(0, head(b$ymax, n=-1))
+ 
+# Make the plot
+ggplot(b, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=INFORMAL_GRP)) +
+     geom_rect() +
+     coord_polar(theta="y") + # Try to remove that to understand how the chart is built initially
+     xlim(c(2, 4)) +
+   theme_void() 
+
+
+```
+
+
+
+
+Make a graph of the subnations with the counts of how many elements it counts as sensitive
+```{r, fig.width=10,fig.height=6}
+sensp_count <- sensp_long %>%
+  count(subnation, sensitive)
+
+sensp_count <- sensp_count[which(sensp_count$sensitive=="Yes"),]
+
+sensp_count %>%
+arrange(sensitive) %>%
+ggplot(aes(fill=sensitive, y=n, x=reorder(subnation, -n))) + 
+  geom_bar(position="stack", stat="identity") + 
+  
+  ggtitle("Count of elements marked as Sensitive by program") +
+  theme_minimal() +
+  theme(legend.position = "none")
+  
+
+```
+
+
+
+```{r}
+senssp_summary <- sensp_long %>%
+  group_by(GNAME,sensitive) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n))
+
+senssp_summary$freq <- round(senssp_summary$freq, 3)
+
+senssp_summary1 <- senssp_summary
+senssp_summary1$n <- NULL
+senssp_summary1 <- senssp_summary1 %>%
+  pivot_wider(names_from = sensitive, values_from = freq, names_prefix = "freq_",)
+
+senssp_summary2 <- senssp_summary
+senssp_summary2$freq <- NULL
+senssp_summary2 <- senssp_summary2 %>%
+  pivot_wider(names_from = sensitive, values_from = n, names_prefix = "cnt_")
+
+senssp_summary_wide <- merge(senssp_summary1, senssp_summary2, by=c("GNAME"))
+rm(senssp_summary1, senssp_summary2)
+senssp_summary_wide$cnt_total <- senssp_summary_wide$cnt_Conditional + senssp_summary_wide$cnt_No + senssp_summary_wide$cnt_Yes
+senssp_summary_wide$cnt_total <- rowSums(senssp_summary_wide[,c("cnt_Conditional", "cnt_No", "cnt_Yes")], na.rm=TRUE)
+senssp_summary_wide$freq_YesCond <- rowSums(senssp_summary_wide[,c("freq_Conditional", "freq_Yes")], na.rm = TRUE)
+senssp_summary_wide$cnt_YesCond <- rowSums(senssp_summary_wide[,c("cnt_Conditional", "cnt_Yes")], na.rm = TRUE)
+
+#senssp_summary_wide <- senssp_summary_wide[c("GNAME","freq_Yes","freq_Conditional","freq_YesCond","freq_No","cnt_Yes","cnt_Conditional","cnt_YesCond","cnt_No","cnt_total")]            
+
+
+senssp_summary_gt1 <- senssp_summary_wide[which(senssp_summary_wide$cnt_total>1),]
+
+cat("There are", nrow(senssp_summary_wide)-nrow(senssp_summary_gt1), "elements that are only sensitive in one subnation.")
+
+senssp_summary_eq1 <- senssp_summary_wide[which(senssp_summary_wide$cnt_total>1 & senssp_summary_wide$freq_YesCond==1 ),"GNAME"]
+senssp_summary_eq1 <- sensp[which(sensp$GNAME %in% senssp_summary_eq1),c("ELEMENT_GLOBAL_ID","INFORMAL_TAX","GNAME","G_PRIMARY_COMMON_NAME","GRANK","RND")]
+senssp_summary_eq1 <- merge(senssp_summary_eq1, senssp_summary_wide[c("GNAME","cnt_total")])
+write.csv(senssp_summary_eq1, "allsens.csv", row.names = FALSE )
+
+senssp_summary_gt1 <-senssp_summary_gt1 %>% mutate(yes_bin = cut(freq_YesCond, breaks=c(0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1.0)))
+
+hist(senssp_summary_gt1$freq_YesCond, main="Consistency of species sensitivity across subnations",
+xlab="Proportion of states/provinces marking a species as sensitive across its range", ylab="Count of Species")
+
+
+senssp_summary_gt1_50per <- senssp_summary_gt1[which(senssp_summary_gt1$freq_YesCond>0.5),]
+
+```
+Of the species that occur in more than one subnation, almost 90% of these are marked as sensitive in half of the states that they occur in.
+
+
+
+```{r}
+
+# senssp_summary %>%
+# ggplot(aes(fill=sensitive, y=freq, x=GNAME)) + 
+#   geom_bar(position="stack", stat="identity") + 
+#   coord_flip() +
+#   
+#   ggtitle("Count of elements marked as Sensitive by program") +
+#   theme_minimal() 
+```
+
